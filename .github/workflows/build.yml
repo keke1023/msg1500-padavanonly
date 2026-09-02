@@ -1,0 +1,146 @@
+name: Build MSG1500 X.00 (padavanonly/immortalwrt)
+
+on:
+  workflow_dispatch:
+    inputs:
+      wifi_driver:
+        description: "MT7615 无线驱动"
+        required: false
+        default: "mt7615d"
+        type: choice
+        options:
+          - mt7615d   # 闭源 mt_wifi（K2P 风格，默认）
+          - mt7615e   # 开源 mt76（兜底）
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ---- 底座：padavanonly/immortalwrt（immortalwrt 18.06 基线，master 分支）----
+  # 自带闭源 MTK 驱动（package/emortal/mt-drivers：mt7603e/mt7612e/mt7615d/mt_wifi）
+  # 自带 golang 1.20.2（由 30-upgrade-go.sh 升到 1.21.13）
+  # feeds：packages(openwrt-18.06) / luci(openwrt-18.06-k5.4) / routing / telephony
+  LEDE_TAG: "master"
+  HELLOWORLD_BRANCH: master
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: ramips/mt7621 · raisecom_msg1500-x-00
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 磁盘清理
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+                       /usr/local/share/boost /usr/local/share/chromium /usr/local/julia* 2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses5-dev libssl-dev python3-distutils python3-setuptools \
+            rsync swig unzip zlib1g-dev file wget curl ca-certificates
+
+      - name: 拉取 padavanonly/immortalwrt @ ${{ env.LEDE_TAG }}
+        run: |
+          git clone -b "$LEDE_TAG" --depth 1 https://github.com/padavanonly/immortalwrt.git openwrt
+          git -C openwrt log -1 --format="immortalwrt HEAD: %H %cd" --date=iso
+
+      - name: 追加 helloworld(master) feed
+        run: bash scripts/10-add-feeds.sh
+
+      - name: Patch MSG1500 无线驱动为闭源 mt7615d（K2P 风格）
+        run: bash scripts/20-patch-wireless.sh
+
+      - name: 升级 golang -> 1.21.13
+        run: bash scripts/30-upgrade-go.sh
+
+      - name: 剔除 rust 相关包
+        run: bash scripts/40-remove-rust.sh
+
+      - name: 安装全部 feeds
+        working-directory: openwrt
+        run: ./scripts/feeds install -a
+
+      - name: 写入 .config 并按驱动模式调整
+        working-directory: openwrt
+        run: |
+          cp ../config/msg1500-x00.config .config
+          if [ "${{ github.event.inputs.wifi_driver }}" = "mt7615e" ]; then
+            # 开源模式：去掉闭源驱动与 mtwifi，改挂开源 kmod-mt7615e + 固件
+            sed -i '/CONFIG_PACKAGE_kmod-mt7615d=/d' .config
+            sed -i '/CONFIG_PACKAGE_luci-app-mtwifi=/d' .config
+            echo "CONFIG_PACKAGE_kmod-mt7615e=y" >> .config
+            echo "CONFIG_PACKAGE_kmod-mt7615-firmware=y" >> .config
+          fi
+          make defconfig
+          # 双保险：闭源模式下确保开源驱动符号不存在（避免与 mt7615d 冲突）
+          if [ "${{ github.event.inputs.wifi_driver }}" != "mt7615e" ]; then
+            sed -i '/CONFIG_PACKAGE_kmod-mt7615e=/d' .config
+          fi
+          # 去除默认/多余的 luci-ssl（纯 HTTP LuCI，避免 libustream 后端冲突）
+          sed -i '/CONFIG_PACKAGE_luci-ssl=y/d' .config
+          echo "# CONFIG_PACKAGE_luci-ssl is not set" >> .config
+          # 兜底剔除任何残留 rust 符号
+          sed -i '/CONFIG_PACKAGE_rust=y/d; /CONFIG_PACKAGE_cargo=y/d; /CONFIG_PACKAGE_.*[Rr]ust.*=y/d' .config
+          make defconfig
+
+      - name: 校验配置（设备 / rust / 驱动 / 版本）
+        working-directory: openwrt
+        run: |
+          set -e
+          grep -q "^CONFIG_TARGET_DEVICE_ramips_mt7621_DEVICE_raisecom_msg1500-x-00=y" .config \
+            || grep -q "^CONFIG_TARGET_ramips_mt7621_DEVICE_raisecom_msg1500-x-00=y" .config \
+            || { echo "!! 目标设备未选中"; exit 1; }
+          if grep -E "^CONFIG_PACKAGE_.*([Rr]ust|shadow-tls)=y" .config; then
+            echo "!! 仍有 rust 相关包被选中"; exit 1
+          fi
+          if grep -q "^CONFIG_PACKAGE_kmod-mt7615d=y" .config && grep -q "^CONFIG_PACKAGE_kmod-mt7615e=y" .config; then
+            echo "!! kmod-mt7615d 与 kmod-mt7615e 同时选中，会内核冲突"; exit 1
+          fi
+          echo "--- 已选中的关键包 ---"
+          grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
+          echo "--- golang 版本 ---"
+          grep -E "^GO_VERSION_MAJOR_MINOR" feeds/packages/lang/golang/golang/Makefile 2>/dev/null || true
+
+      - name: 下载源码
+        working-directory: openwrt
+        run: make download -j"$(nproc)"
+
+      - name: 编译
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: 整理产物 + sha256
+        working-directory: openwrt
+        run: |
+          mkdir -p /tmp/out
+          cp -v bin/targets/ramips/mt7621/*msg1500* /tmp/out/ 2>/dev/null || true
+          cp -v bin/targets/ramips/mt7621/sha256sums /tmp/out/ 2>/dev/null || true
+          ls -lh /tmp/out/
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: msg1500-x00-padavanonly-fw
+          path: /tmp/out/*
+          if-no-files-found: error
+
+      - name: 失败时上传日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msg1500-x00-padavanonly-build-logs
+          path: |
+            openwrt/logs/**
+            openwrt/.config
