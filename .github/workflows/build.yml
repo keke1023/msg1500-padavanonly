@@ -71,6 +71,10 @@ jobs:
         working-directory: openwrt
         run: ./scripts/feeds install -a
 
+      - name: 升级 golang 后删除过时补丁（go1.21 已自带修复）
+        working-directory: openwrt
+        run: bash ../scripts/35-remove-golang-patch.sh
+
       - name: 写入 .config 并按驱动模式调整
         working-directory: openwrt
         run: |
@@ -116,25 +120,10 @@ jobs:
         working-directory: openwrt
         run: make download -j"$(nproc)"
 
-      - name: 诊断 golang 源码下载可达性（dl.google / 中科大）
+      - name: 编译
         working-directory: openwrt
         run: |
-          mkdir -p dl
-          for u in \
-            "https://dl.google.com/go/go1.21.13.src.tar.gz" \
-            "https://mirrors.ustc.edu.cn/golang/go1.21.13.src.tar.gz" \
-            "https://dl.google.com/go/go1.17.13.src.tar.gz" \
-            "https://dl.google.com/go/go1.4-bootstrap-20171003.tar.gz" ; do
-            echo "== $u =="
-            curl -fSL --connect-timeout 20 --retry 2 -o "dl/$(basename "$u")" "$u" \
-              && echo "OK $(wc -c < "dl/$(basename "$u")") bytes" || echo "FAILED"
-          done
-          ls -lh dl/ | head -20
-
-      - name: 编译（诊断 golang/host，串行 V=s 暴露真实报错）
-        working-directory: openwrt
-        run: |
-          make -j1 V=s package/feeds/packages/golang/host/compile
+          make -j"$(nproc)" || make -j1 V=s
 
       - name: 整理产物 + sha256
         working-directory: openwrt
