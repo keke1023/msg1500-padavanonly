@@ -24,6 +24,9 @@ env:
   LEDE_TAG: "master"
   HELLOWORLD_BRANCH: master
   TZ: Asia/Shanghai
+  # 兜底：CI runner 的 GOPROXY 可能为空/无效串，这里给一个有效值（golang 构建上下文里也会被 36 脚本再次强制注入）
+  GOPROXY: "https://proxy.golang.org,https://goproxy.cn,direct"
+  GOSUMDB: "off"
 
 jobs:
   build:
@@ -74,6 +77,10 @@ jobs:
       - name: 升级 golang 后删除过时补丁（go1.21 已自带修复）
         working-directory: openwrt
         run: bash ../scripts/35-remove-golang-patch.sh
+
+      - name: 注入有效 GOPROXY（修复 frp/ngrokc 等 Go 模块下载失败）
+        working-directory: openwrt
+        run: bash ../scripts/36-fix-golang-proxy.sh
 
       - name: 写入 .config 并按驱动模式调整
         working-directory: openwrt
