@@ -82,6 +82,10 @@ jobs:
         working-directory: openwrt
         run: bash ../scripts/36-fix-golang-proxy.sh
 
+      - name: 钉 xray-core 到 24.12.31（Go 1.21 可编；绕过 helloworld 默认 26.5.9/Go1.26）
+        working-directory: openwrt
+        run: bash ../scripts/37-pin-xray.sh
+
       - name: 写入 .config 并按驱动模式调整
         working-directory: openwrt
         run: |
@@ -119,7 +123,7 @@ jobs:
             echo "!! kmod-mt7615d 与 kmod-mt7615e 同时选中，会内核冲突"; exit 1
           fi
           echo "--- 已选中的关键包 ---"
-          grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
+          grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|luci-app-ssr-plus|xray-core|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
           echo "--- golang 版本 ---"
           grep -E "^GO_VERSION_MAJOR_MINOR" feeds/packages/lang/golang/golang/Makefile 2>/dev/null || true
 
