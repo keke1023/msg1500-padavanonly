@@ -19,7 +19,7 @@ concurrency:
 env:
   # ---- 底座：padavanonly/immortalwrt（immortalwrt 18.06 基线，master 分支）----
   # 自带闭源 MTK 驱动（package/emortal/mt-drivers：mt7603e/mt7612e/mt7615d/mt_wifi）
-  # 自带 golang 1.20.2（由 30-upgrade-go.sh 升到 1.21.13）
+  # 自带 golang 1.20.2（由 30-upgrade-go.sh 升到 1.27.1，引导器换预编译 go1.26.8 以编 helloworld master 的 go1.26 包）
   # feeds：packages(openwrt-18.06) / luci(openwrt-18.06-k5.4) / routing / telephony
   LEDE_TAG: "master"
   HELLOWORLD_BRANCH: master
@@ -64,7 +64,7 @@ jobs:
       - name: Patch MSG1500 无线驱动为闭源 mt7615d（K2P 风格）
         run: bash scripts/20-patch-wireless.sh
 
-      - name: 升级 golang -> 1.21.13
+      - name: 升级 golang -> 1.27.1（引导器换预编译 go1.26.8，以编 helloworld master 的 go1.26 包）
         run: bash scripts/30-upgrade-go.sh
 
       - name: 剔除 rust 相关包
@@ -81,10 +81,6 @@ jobs:
       - name: 注入有效 GOPROXY（修复 frp/ngrokc 等 Go 模块下载失败）
         working-directory: openwrt
         run: bash ../scripts/36-fix-golang-proxy.sh
-
-      - name: 钉 xray-core 到 24.12.31（Go 1.21 可编；绕过 helloworld 默认 26.5.9/Go1.26）
-        working-directory: openwrt
-        run: bash ../scripts/37-pin-xray.sh
 
       - name: 写入 .config 并按驱动模式调整
         working-directory: openwrt
