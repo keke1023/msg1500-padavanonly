@@ -36,19 +36,73 @@
 
 刷机：原厂 / Breed 下刷 sysupgrade.bin；MSG1500 为 NAND 机型，**首次建议不带配置刷入**。
 
+## 编译结果 & 刷机验证
+
+### 首次构建已通过（2026-09-03）
+
+| 项 | 值 |
+|---|---|
+| Run | `33698619330` → **success** |
+| 产物 | `msg1500-x00-padavanonly-fw`（≈23.4 MB，未过期） |
+| 拉取方式 | GitHub Web UI → Actions → 该 Run → Artifacts 下载（沙箱内无法直接拉取 artifact，见下） |
+
+### 三次失败根因链（已全修）
+
+1. **Run 33636539309**：升级 golang 后 host build 3 秒崩 → 过时补丁 `001-cmd-link-use-gold-on-ARM-ARM64...` 在 go1.21 上 `Hunk FAILED`。
+   **修**：`scripts/35-remove-golang-patch.sh` 在 `feeds install -a` 后物理删补丁。
+2. **Run 33644993096**：frp/ngrokc 等 Go 模块拉取失败 `GOPROXY list is not the empty string, but contains no entries` → `golang-values.mk` 的 `GOPROXY` 在 `# Unmodified` 段、继承 runner 坏环境值。
+   **修**：`scripts/36-fix-golang-proxy.sh` 强制注入 `proxy.golang.org,goproxy.cn,direct` + `GOSUMDB=off`，并在 workflow `env` 加双保险。
+3. **Run 33698619330（本次）**：两处修复同时命中 → **成功**。
+
+### 刷机后验证清单
+
+```sh
+# 1. 闭源驱动双频 dat 齐全（MTK_CHIP_MT7615E_DBDC 双频）
+ls /etc/wireless/mt7615/          # 应有 2G / 5G 两个 .dat
+
+# 2. 内核模块已加载
+lsmod | grep mt_wifi              # 应出现 mt_wifi
+
+# 3. 无线用 mt7615 闭源驱动而非 mt76 开源
+uci show wireless                 # 确认 ifname 走 mt7615，无 mt76x2 之类
+
+# 4. 选中的 Luci app 在位
+opkg list-installed | grep -E "luci-app-(frpc|ngrokc|autoreboot|mtwifi|ssr-plus)"
+```
+
+> 注：MSG1500 为 NAND 机型，首次建议「不带配置（不保留设置）」刷入 sysupgrade.bin。
+
+### 关于 artifact 下载
+
+GitHub Actions 产物走 Azure blob 存储，本沙箱环境对大二进制下载会返回「HTTP 200 但 0 字节」（与 GitHub tarball 被掐同类），**无法在沙箱内直接拉取核验**。
+判定成功以 GitHub API 的 `conclusion=success` + `artifacts[].size_in_bytes` 非空为准；最终固件请在 GitHub Web UI 下载。
+
+## 发布到 Release（可选）
+
+仓库附带 `release.yml`：本地给仓库打 `v*` tag 并推送后，会自动把最新 Run 的固件产物发布到一个 GitHub Release，
+无需每次编译都刷 release。用法：
+
+```sh
+git tag v1.0.0 && git push origin v1.0.0
+```
+
 ## 目录结构
 
 ```
-├── .github/workflows/build.yml   # 主 workflow（拉源码→加helloworld→patch无线→升go→删rust→install→编译→上传）
+├── .github/workflows/build.yml    # 主 workflow（拉源码→加helloworld→patch无线→升go→删rust→install→编译→上传）
+├── .github/workflows/release.yml  # 打 v* tag 时触发，重跑构建并把固件发到 GitHub Release（不污染日常编译）
 ├── config/msg1500-x00.config      # 种子配置（defconfig 自动补全）
 └── scripts/
     ├── 10-add-feeds.sh            # 追加 helloworld master feed，feeds update
     ├── 20-patch-wireless.sh       # 把 MSG1500 无线从开源 kmod-mt7615e 改成闭源 kmod-mt7615d + luci-app-mtwifi
     ├── 30-upgrade-go.sh           # golang 1.20.2 → 1.21.13
+    ├── 35-remove-golang-patch.sh  # feeds install 后删过时 gold 补丁（go1.21 已自带修复，否则 host build Hunk FAILED）
+    ├── 36-fix-golang-proxy.sh     # 强制注入有效 GOPROXY（修 frp/ngrokc 等 Go 模块拉取失败）
+    ├── 37-pin-xray.sh             # 钉 xray-core 到 24.12.31（Go1.21 可编，绕过 helloworld 默认新版）
     └── 40-remove-rust.sh          # 物理剔除 3 个 rust 包（缺一即报错退出）
 ```
 
-脚本顺序：**feeds update → patch 无线 → 升 go → 删 rust → feeds install -a → 写 .config → defconfig**。
+脚本顺序：**feeds update → patch 无线 → 升 go → 删 rust → feeds install -a → 35 删补丁 → 36 注 GOPROXY → 37 钉 xray → 写 .config → defconfig**。
 
 ## 关键技术点
 

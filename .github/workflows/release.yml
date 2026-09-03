@@ -1,0 +1,120 @@
+name: Release MSG1500 X.00 Firmware
+
+# 用法：本地打 v* tag 并推送即触发，把固件发布到 GitHub Release。
+#   git tag v1.0.0 && git push origin v1.0.0
+# 日常编译（build.yml）仍只上传 Artifacts，不刷 Release，避免每次跑都产生 release。
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  LEDE_TAG: "master"
+  HELLOWORLD_BRANCH: master
+  TZ: Asia/Shanghai
+  GOPROXY: "https://proxy.golang.org,https://goproxy.cn,direct"
+  GOSUMDB: "off"
+
+jobs:
+  release:
+    name: build-and-release ramips/mt7621 · raisecom_msg1500-x-00
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 磁盘清理
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+                       /usr/local/share/boost /usr/local/share/chromium /usr/local/julia* 2>/dev/null || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+            gettext git libncurses5-dev libssl-dev python3-distutils python3-setuptools \
+            rsync swig unzip zlib1g-dev file wget curl ca-certificates
+
+      - name: 拉取 padavanonly/immortalwrt @ ${{ env.LEDE_TAG }}
+        run: |
+          git clone -b "$LEDE_TAG" --depth 1 https://github.com/padavanonly/immortalwrt.git openwrt
+          git -C openwrt log -1 --format="immortalwrt HEAD: %H %cd" --date=iso
+
+      - name: 追加 helloworld(master) feed
+        run: bash scripts/10-add-feeds.sh
+
+      - name: Patch MSG1500 无线驱动为闭源 mt7615d（K2P 风格）
+        run: bash scripts/20-patch-wireless.sh
+
+      - name: 升级 golang -> 1.21.13
+        run: bash scripts/30-upgrade-go.sh
+
+      - name: 剔除 rust 相关包
+        run: bash scripts/40-remove-rust.sh
+
+      - name: 安装全部 feeds
+        working-directory: openwrt
+        run: ./scripts/feeds install -a
+
+      - name: 升级 golang 后删除过时补丁（go1.21 已自带修复）
+        working-directory: openwrt
+        run: bash ../scripts/35-remove-golang-patch.sh
+
+      - name: 注入有效 GOPROXY（修复 frp/ngrokc 等 Go 模块下载失败）
+        working-directory: openwrt
+        run: bash ../scripts/36-fix-golang-proxy.sh
+
+      - name: 钉 xray-core 到 24.12.31（Go 1.21 可编）
+        working-directory: openwrt
+        run: bash ../scripts/37-pin-xray.sh
+
+      - name: 写入 .config
+        working-directory: openwrt
+        run: |
+          cp ../config/msg1500-x00.config .config
+          make defconfig
+          sed -i '/CONFIG_PACKAGE_kmod-mt7615e=/d' .config
+          sed -i '/CONFIG_PACKAGE_luci-ssl=y/d' .config
+          echo "# CONFIG_PACKAGE_luci-ssl is not set" >> .config
+          sed -i '/CONFIG_PACKAGE_rust=y/d; /CONFIG_PACKAGE_cargo=y/d; /CONFIG_PACKAGE_.*[Rr]ust.*=y/d' .config
+          make defconfig
+
+      - name: 下载源码
+        working-directory: openwrt
+        run: make download -j"$(nproc)"
+
+      - name: 编译
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: 整理产物
+        working-directory: openwrt
+        run: |
+          mkdir -p /tmp/out
+          cp -v bin/targets/ramips/mt7621/*msg1500* /tmp/out/ 2>/dev/null || true
+          cp -v bin/targets/ramips/mt7621/sha256sums /tmp/out/ 2>/dev/null || true
+          ls -lh /tmp/out/
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MSG1500 X.00 ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: |
+            RAISECOM MSG1500 X.00（Nokia A-040W-Q）· MT7621A + MT7615 DBDC
+            底座 padavanonly/immortalwrt @ master · 闭源 MT7615 驱动（kmod-mt7615d + luci-app-mtwifi）
+            helloworld master · golang 1.21.13 · 纯 HTTP Luci
+          files: |
+            /tmp/out/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
