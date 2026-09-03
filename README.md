@@ -95,14 +95,15 @@ git tag v1.0.0 && git push origin v1.0.0
 └── scripts/
     ├── 10-add-feeds.sh            # 追加 helloworld master feed，feeds update
     ├── 20-patch-wireless.sh       # 把 MSG1500 无线从开源 kmod-mt7615e 改成闭源 kmod-mt7615d + luci-app-mtwifi
-    ├── 30-upgrade-go.sh           # golang 1.20.2 → 1.21.13
-    ├── 35-remove-golang-patch.sh  # feeds install 后删过时 gold 补丁（go1.21 已自带修复，否则 host build Hunk FAILED）
+    ├── 30-upgrade-go.sh           # golang 1.20.2 → 1.27.1（引导器换预编译 go1.26.8，以编 helloworld master 的 go1.26 包）
+    ├── 35-remove-golang-patch.sh  # feeds install 后删过时 gold 补丁（go1.21+ 已自带修复，否则 host build Hunk FAILED）
     ├── 36-fix-golang-proxy.sh     # 强制注入有效 GOPROXY（修 frp/ngrokc 等 Go 模块拉取失败）
-    ├── 37-pin-xray.sh             # 钉 xray-core 到 24.12.31（Go1.21 可编，绕过 helloworld 默认新版）
     └── 40-remove-rust.sh          # 物理剔除 3 个 rust 包（缺一即报错退出）
 ```
 
-脚本顺序：**feeds update → patch 无线 → 升 go → 删 rust → feeds install -a → 35 删补丁 → 36 注 GOPROXY → 37 钉 xray → 写 .config → defconfig**。
+脚本顺序：**feeds update → patch 无线 → 升 go → 删 rust → feeds install -a → 35 删补丁 → 36 注 GOPROXY → 写 .config → defconfig**。
+
+> 注：xray-core 直接用 helloworld master 默认版本（26.5.9，需 go1.26），由升到 1.27.1 的 Go 工具链编译，不再钉旧版。
 
 ## 关键技术点
 
@@ -111,8 +112,8 @@ git tag v1.0.0 && git push origin v1.0.0
   MSG1500 的 MT7621 单芯片 MT7615 DBDC 与 K2P 同源，可直接套用 K2P 的 `kmod-mt7615d luci-app-mtwifi` 写法。
 - **为什么不勾 luci-ssl**：纯 HTTP LuCI 更省心，且避免 `libustream-openssl` / `libustream-mbedtls` 抢同名
   `libustream-ssl.so` 的安装冲突（lede 版曾踩过，最终也是去 luci-ssl）。
-- **golang 升级上限 1.21.x**：padavanonly 的 golang Makefile bootstrap 链是 go1.4 + go1.17.13，go1.17 只能 bootstrap 到 go1.21，
-  强行升 1.22+ 会因 bootstrap 版本不足编译失败。1.21.13 的 PKG_HASH 取自 openwrt/packages 23.05 官方 Makefile（权威值）。
+- **golang 升到 1.27.1（预编译引导器方案）**：padavanonly 18.06 的 `lang/golang/golang/Makefile` 是**源码两段式引导**（`go1.4` 源码 → `go1.17.13` 源码 → 主版本），Go 引导规则「N 版本需 N-2 引导器」意味着 go1.17.13 最多只能编出 **go1.21**，不能靠改版本号直接到 1.26+。helloworld master 当前 xray-core=26.5.9 的 go.mod 要求 **go1.26**，
+  **修法**：把第二段引导器 `BOOTSTRAP_1_17` 从「go1.17.13 源码」换成「go1.26.8 预编译二进制」直接当 `GOROOT_BOOTSTRAP`，主版本即可 `make.bash` 编到 1.27.1；预编译包无 `src/make.bash`，须把 `GoCompiler/Bootstrap-1.17/Make` 用空 define 覆盖成 no-op。权威 hash：go1.27.1 src=`4e408abae…238b1`、go1.26.8 预编译=`d0f743b3…f8b57b`（go.dev/dl）。
 - **rust 判定**：不只按目录名，还 grep Makefile 里的 `rust-package.mk` / `rust/host` / `Cargo.toml`
   （`shadow-tls` 名字不带 rust，靠这个标记抓出）。`luci-app-ssr-plus` 本体只在可选项里提到 rust 包名，有白名单保护不会被误删。
 
@@ -123,7 +124,7 @@ git tag v1.0.0 && git push origin v1.0.0
 | padavanonly 18.06 基线在 ubuntu-22.04 (gcc11) 上编内核/工具链异常 | 低-中 | job 加 `container: debian:11` |
 | `kmod-mt7615d`（padavanonly 版）在 18.06/5.4 内核上编译失败 | 低-中 | workflow 选 `mt7615e` 开源模式重跑 |
 | helloworld master 后续更进新内核 API，某包在 18.06 上失败 | 随时间上升 | 定位失败包后钉旧版本号，或把 helloworld 换成其旧 tag |
-| golang 1.21.13 仍不够新导致 frpc/ngrokc 编译失败 | 低 | 进一步升到 1.21 更新 patch 或换 packages 源 |
+| golang 1.27.1 仍不够新导致 helloworld master 某 Go 包编译失败 | 低 | 进一步升到更新的 go1.2x（同步抬高预编译引导器到 ≥1.24.2），或把 helloworld 换成旧 tag |
 
 已知取舍：padavanonly/immortalwrt 是 18.06 时代的长期维护 fork，自带 MTK 闭源驱动全家桶 + 国内优化，
 适合"开箱即用的老设备闭源无线"；但整体比 lede 20251001 老。如需更新的内核/工具链，请回 lede 版 `msg1500-actions`。
