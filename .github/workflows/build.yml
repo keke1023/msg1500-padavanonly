@@ -67,6 +67,9 @@ jobs:
       - name: 升级 golang -> 1.27.1（引导器换预编译 go1.26.8，以编 helloworld master 的 go1.26 包）
         run: bash scripts/30-upgrade-go.sh
 
+      - name: 升级 xray-core recipe -> helloworld 26.7.28（修复 mipsle 下 gvisor gohacks build constraints 编译失败）
+        run: bash scripts/38-upgrade-xray.sh
+
       - name: 剔除 rust 相关包
         run: bash scripts/40-remove-rust.sh
 
