@@ -1,0 +1,19 @@
+name: probe-k2p
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "probe only"
+        required: false
+        default: "msg1500-x00"
+        type: choice
+        options:
+          - msg1500-x00
+          - k2p-32m
+
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "device=${{ github.event.inputs.device }}"
