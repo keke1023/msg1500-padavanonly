@@ -137,7 +137,7 @@ jobs:
             echo "!! kmod-mt7615d 与 kmod-mt7615e 同时选中，会内核冲突"; exit 1
           fi
           echo "--- 已选中的关键包 ---"
-echo "--- MTK DBDC 状态（rai0 关键）---"
+          echo "--- MTK DBDC 状态（rai0 关键）---"
           grep -E "^CONFIG_MTK_(DBDC_MODE|CHIP_MT7615E|FIRST_IF_MT7615E|MULTI_INF_SUPPORT|DEFAULT_5G_PROFILE)=" .config || echo "!! MTK DBDC 链未生效"
 
           grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|luci-app-ssr-plus|xray-core|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
