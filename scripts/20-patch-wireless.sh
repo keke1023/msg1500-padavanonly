@@ -34,7 +34,7 @@ mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-mtwifi-lan <<'EOF'
 #!/bin/sh
 # 切换/启用 MTK 闭源驱动(mt_wifi)后，清理残留的开源 mt76 wireless，并让 ra0/rai0 挂到 lan
-if [ -f /etc/config/wireless ] && grep -Eq 'radio0|type mac80211|kmod-mt76|mt76x' /etc/config/wireless && ! grep -q 'ra0\|rai0' /etc/config/wireless; then
+if [ -f /etc/config/wireless ] && { grep -Eq 'radio0|type mac80211|kmod-mt76|mt76x' /etc/config/wireless || ! grep -q 'rai0' /etc/config/wireless; }; then
     rm -f /etc/config/wireless
 fi
 i=0
