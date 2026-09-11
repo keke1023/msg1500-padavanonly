@@ -12,8 +12,15 @@ on:
           - mt7615d   # 闭源 mt_wifi（K2P 风格，默认）
           - mt7615e   # 开源 mt76（兜底）
 
+      device:/n        description: "目标机型"
+        required: false
+        default: "msg1500-x00"
+        type: choice
+        options:/n          - msg1500-x00   # RAISECOM MSG1500 X.00（NAND，默认）
+          - k2p-32m      # Phicomm K2P 32MB 闪存版
+
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ github.event.inputs.device }}
   cancel-in-progress: true
 
 env:
@@ -30,7 +37,7 @@ env:
 
 jobs:
   build:
-    name: ramips/mt7621 · raisecom_msg1500-x-00
+    name: ramips/mt7621 · ${{ github.event.inputs.device }}
     runs-on: ubuntu-22.04
     timeout-minutes: 360
 
@@ -64,6 +71,10 @@ jobs:
       - name: Patch MSG1500 无线驱动为闭源 mt7615d（K2P 风格）
         run: bash scripts/20-patch-wireless.sh
 
+      - name: Patch K2P -> K2P-32M（32MB 闪存，仅 k2p-32m 机型执行）
+        if: ${{ github.event.inputs.device == 'k2p-32m' }}
+        run: bash scripts/25-add-k2p-32m.sh
+
       - name: 升级 golang -> 1.27.1（引导器换预编译 go1.26.8，以编 helloworld master 的 go1.26 包）
         run: bash scripts/30-upgrade-go.sh
 
@@ -88,7 +99,7 @@ jobs:
       - name: 写入 .config 并按驱动模式调整
         working-directory: openwrt
         run: |
-          cp ../config/msg1500-x00.config .config
+          cp "../config/${{ github.event.inputs.device }}.config" .config
           if [ "${{ github.event.inputs.wifi_driver }}" = "mt7615e" ]; then
             # 开源模式：去掉闭源驱动与 mtwifi，改挂开源 kmod-mt7615e + 固件
             sed -i '/CONFIG_PACKAGE_kmod-mt7615d=/d' .config
@@ -112,9 +123,11 @@ jobs:
         working-directory: openwrt
         run: |
           set -e
-          grep -q "^CONFIG_TARGET_DEVICE_ramips_mt7621_DEVICE_raisecom_msg1500-x-00=y" .config \
-            || grep -q "^CONFIG_TARGET_ramips_mt7621_DEVICE_raisecom_msg1500-x-00=y" .config \
-            || { echo "!! 目标设备未选中"; exit 1; }
+          DEV="raisecom_msg1500-x-00"
+          [ "${{ github.event.inputs.device }}" = "k2p-32m" ] && DEV="phicomm_k2p"
+          grep -q "^CONFIG_TARGET_DEVICE_ramips_mt7621_DEVICE_${DEV}=y" .config \
+            || grep -q "^CONFIG_TARGET_ramips_mt7621_DEVICE_${DEV}=y" .config \
+            || { echo "!! 目标设备未选中: ${DEV}"; exit 1; }
           if grep -E "^CONFIG_PACKAGE_.*([Rr]ust|shadow-tls)=y" .config; then
             echo "!! 仍有 rust 相关包被选中"; exit 1
           fi
@@ -139,14 +152,16 @@ jobs:
         working-directory: openwrt
         run: |
           mkdir -p /tmp/out
-          cp -v bin/targets/ramips/mt7621/*msg1500* /tmp/out/ 2>/dev/null || true
+          GLOB="msg1500"
+          [ "${{ github.event.inputs.device }}" = "k2p-32m" ] && GLOB="k2p"
+          cp -v bin/targets/ramips/mt7621/*${GLOB}* /tmp/out/ 2>/dev/null || true
           cp -v bin/targets/ramips/mt7621/sha256sums /tmp/out/ 2>/dev/null || true
           ls -lh /tmp/out/
 
       - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: msg1500-x00-padavanonly-fw
+          name: ${{ github.event.inputs.device }}-padavanonly-fw
           path: /tmp/out/*
           if-no-files-found: error
 
@@ -154,7 +169,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: msg1500-x00-padavanonly-build-logs
+          name: ${{ github.event.inputs.device }}-padavanonly-build-logs
           path: |
             openwrt/logs/**
             openwrt/.config
