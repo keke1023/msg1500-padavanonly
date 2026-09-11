@@ -29,7 +29,8 @@
 
 1. 本目录即完整 GitHub Actions 项目，推到 `keke1023/msg1500-padavanonly`。
 2. 仓库 **Actions** 页 → `Build MSG1500 X.00 (padavanonly/immortalwrt)` → **Run workflow**
-   - `wifi_driver` 选 `mt7615d`（闭源，默认）或 `mt7615e`（开源兜底）
+   - `device` 选 `msg1500-x00`（默认，RAISECOM MSG1500 X.00）或 `k2p-32m`（Phicomm K2P 32MB 闪存版）
+   - `wifi_driver` 选 `mt7615d`（闭源，默认）或 `mt7615e`（开源兜底；k2p-32m 建议保持默认 mt7615d）
 3. 首次编译约 1.5～2.5 小时；完成后在 Artifacts 下载 `msg1500-x00-padavanonly-fw`
    （sysupgrade.bin + sha256sums）
 4. 失败时 Artifacts 里会有 `msg1500-x00-padavanonly-build-logs`（logs + .config）用于定位
@@ -91,10 +92,12 @@ git tag v1.0.0 && git push origin v1.0.0
 ```
 ├── .github/workflows/build.yml    # 主 workflow（拉源码→加helloworld→patch无线→升go→删rust→install→编译→上传）
 ├── .github/workflows/release.yml  # 打 v* tag 时触发，重跑构建并把固件发到 GitHub Release（不污染日常编译）
-├── config/msg1500-x00.config      # 种子配置（defconfig 自动补全）
+├── config/msg1500-x00.config
+├── config/k2p-32m.config          # K2P-32M 种子配置（32MB 闪存）      # 种子配置（defconfig 自动补全）
 └── scripts/
     ├── 10-add-feeds.sh            # 追加 helloworld master feed，feeds update
-    ├── 20-patch-wireless.sh       # 把 MSG1500 无线从开源 kmod-mt7615e 改成闭源 kmod-mt7615d + luci-app-mtwifi
+    ├── 20-patch-wireless.sh
+    ├── 25-add-k2p-32m.sh          # 把 Phicomm K2P 改成 32MB 闪存版 K2P-32M（IMAGE_SIZE + DTS 分区）       # 把 MSG1500 无线从开源 kmod-mt7615e 改成闭源 kmod-mt7615d + luci-app-mtwifi
     ├── 30-upgrade-go.sh           # golang 1.20.2 → 1.27.1（引导器换预编译 go1.26.8，以编 helloworld master 的 go1.26 包）
     ├── 35-remove-golang-patch.sh  # feeds install 后删过时 gold 补丁（go1.21+ 已自带修复，否则 host build Hunk FAILED）
     ├── 36-fix-golang-proxy.sh     # 强制注入有效 GOPROXY（修 frp/ngrokc 等 Go 模块拉取失败）
@@ -128,6 +131,26 @@ git tag v1.0.0 && git push origin v1.0.0
 
 已知取舍：padavanonly/immortalwrt 是 18.06 时代的长期维护 fork，自带 MTK 闭源驱动全家桶 + 国内优化，
 适合"开箱即用的老设备闭源无线"；但整体比 lede 20251001 老。如需更新的内核/工具链，请回 lede 版 `msg1500-actions`。
+
+## 增加机型：Phicomm K2P-32M（32MB 闪存）
+
+在原有 MSG1500 X.00 基础上新增 **Phicomm K2P（mt7621）的 32MB 闪存版**。K2P 原厂为 16MB SPI NOR，
+本仓库通过 `scripts/25-add-k2p-32m.sh` 在编译期改造 `padavanonly/immortalwrt` 自带的 K2P 定义：
+
+| 改造项 | 改前（padavanonly 原值） | 改后 |
+|---|---|---|
+| `mt7621.mk` 设备块 `IMAGE_SIZE` | `16064k` | `32128k`（仅 K2P 设备块，范围 sed，不动其余 35 个 16064k 机型） |
+| DTS `model` | `Phicomm K2P` | `Phicomm K2P-32M` |
+| DTS `spi-max-frequency` 之后 | — | 新增 `broken-flash-reset;`（部分 32MB 闪存需要软件 reset） |
+| DTS firmware 分区 `reg` | `<0x50000 0xfb0000>`（≈15.7MB） | `<0x50000 0x1fb0000>`（占满 32MB） |
+
+> ⚠️ 网上流传的 K2P 32M 改法（`s/15744k/32128k/g`、`s/<0xa0000 0xf60000>/<0xa0000 0x1f60000>/`）是针对**官方 OpenWrt / 老 lede** 的，
+> 在 padavanonly/immortalwrt 上**不对症**：该底座 K2P 的 `IMAGE_SIZE` 是 `16064k`（且全文件出现 36 次，全局替换会改坏其他机型），
+> firmware 分区是 `<0x50000 0xfb0000>` 而非 `<0xa0000 0xf60000>`。本仓库的 `25-add-k2p-32m.sh` 已按实际 base 修正。
+> K2P 的 `DEVICE_PACKAGES` 默认即 `kmod-mt7615d luci-app-mtwifi`（闭源驱动同源），故无需再 patch 无线。
+
+刷机：K2P 为 SPI NOR，Breed / 官方 Bootloader 下刷
+`openwrt-ramips-mt7621-phicomm_k2p-squashfs-sysupgrade.bin` 即可（固件文件名含 `phicomm_k2p`）。
 
 ---
 🐾 阿宝定制 · 2026-09-01 · 数据来源：GitHub API 实时核查（padavanonly/immortalwrt 各目录 / 包 Makefile / openwrt-23.05 golang）
