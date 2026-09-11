@@ -12,11 +12,13 @@ on:
           - mt7615d   # 闭源 mt_wifi（K2P 风格，默认）
           - mt7615e   # 开源 mt76（兜底）
 
-      device:/n        description: "目标机型"
+      device:
+        description: "目标机型"
         required: false
         default: "msg1500-x00"
         type: choice
-        options:/n          - msg1500-x00   # RAISECOM MSG1500 X.00（NAND，默认）
+        options:
+          - msg1500-x00   # RAISECOM MSG1500 X.00（NAND，默认）
           - k2p-32m      # Phicomm K2P 32MB 闪存版
 
 concurrency:
