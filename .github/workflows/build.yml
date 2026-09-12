@@ -139,10 +139,6 @@ jobs:
           echo "--- 已选中的关键包 ---"
           echo "--- MTK DBDC 状态（rai0 关键）---"
           grep -E "^CONFIG_MTK_(DBDC_MODE|CHIP_MT7615E|CHIP_MT7615E_DBDC|FIRST_IF_MT7615E|MULTI_INF_SUPPORT|DEFAULT_5G_PROFILE)=" .config || echo "!! MTK DBDC 链未生效"
-          echo "--- 7615d.l1profile.dat DBDC 命名校验（ra0=2.4G / rai0=5G）---"
-          grep -q '^INDEX0_main_ifname=ra0;rai0' package/emortal/mt-drivers/mt_wifi/files/7615d.l1profile.dat \
-            && echo "OK l1profile 已修正为 ra0;rai0（2.4G=ra0 / 5G=rai0）" \
-            || echo "!! l1profile 未修正（命名可能仍错乱 rax0/ra0）"
 
           grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|luci-app-ssr-plus|xray-core|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
           echo "--- golang 版本 ---"
