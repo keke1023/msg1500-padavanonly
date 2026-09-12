@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 把 MSG1500 X.00 的无线驱动从默认的开源 kmod-mt7615e 改为 K2P 风格的闭源 kmod-mt7615d + luci-app-mtwifi，
-# 并显式带上 kmod-ramips_hnat（MediaTek HWNAT；mt7621 target 的 DEFAULT_PACKAGES 本就含它，此处双保险）。
+# 把 MSG1500 X.00 的无线驱动从默认的开源 kmod-mt7615e 改为 K2P 风格的闭源 kmod-mt7615d + luci-app-mtwifi。
+# 注意：HWNAT(kmod-ramips_hnat) 不在此注入——它已随 mt7621 target 的 DEFAULT_PACKAGES 进镜像；
+# 实证种子/DEVICE_PACKAGES 显式 pin（尤其 =m）反而会导致 ipk 编了却不装进镜像（mtkhnat.ko MISSING）。
 # 修复闭源驱动(mt_wifi)下的三个问题：
 #   1) MT7615 是 DBDC 芯片，mt7615d config.in 的 MTK_DBDC_MODE 无 default → 强制默认开，保证双频接口都建。
 #   2) netifd 不认识 type mt7615 的无线，ra0/rax0 不会自动挂 br-lan：
@@ -12,10 +13,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../openwrt"
 
-echo "[*] patch MSG1500 X.00 wireless -> closed-source mt7615d (K2P style) + HWNAT"
-sed -i 's/kmod-mt7615e kmod-mt7615-firmware/kmod-mt7615d luci-app-mtwifi kmod-ramips_hnat/' target/linux/ramips/image/mt7621.mk
+echo "[*] patch MSG1500 X.00 wireless -> closed-source mt7615d (K2P style)"
+sed -i 's/kmod-mt7615e kmod-mt7615-firmware/kmod-mt7615d luci-app-mtwifi/' target/linux/ramips/image/mt7621.mk
 
-if grep -q "kmod-mt7615d luci-app-mtwifi kmod-ramips_hnat" target/linux/ramips/image/mt7621.mk; then
+if grep -q "kmod-mt7615d luci-app-mtwifi" target/linux/ramips/image/mt7621.mk; then
   echo "[+] mt7621.mk patched OK"
 else
   echo "!! 未能替换 mt7621.mk 中的无线驱动，请检查 mt7621.mk 结构是否变化"
@@ -34,30 +35,29 @@ echo "[*] install uci-defaults: 99-mtwifi-lan"
 mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-mtwifi-lan <<'EOF'
 #!/bin/sh
-# MTK 闭源驱动(mt_wifi)兜底：
-# 1) 把 ra0/rax0/rai0 写进 br-lan 的端口列表（netifd 原生桥管理，时序无忧）；
+# MTK 闭源驱动(mt_wifi)兜底（老式 swconfig 风格 network：option type bridge + option ifname）：
+# 1) 把已存在的 ra0/rax0/rai0 追加进 lan 的 ifname（netifd 建桥时挂入，持久化、reload 不掉）；
+#    注：本树 network 为老式 ifname 风格，DSA 的 config device/list ports 写法无效。
+#    驱动由 /lib/preinit/91_load_wifi.sh 在 preinit 阶段加载，先于 S10 boot 的 uci-defaults，接口已存在。
 # 2) wifi-iface 强制 network=lan；
 # 3) 清理开源 mt76 驱动残留的旧 wireless 配置。
 [ -f /etc/config/wireless ] && grep -Eq 'type mac80211|radio[0-9]+' /etc/config/wireless && rm -f /etc/config/wireless
 
-. /lib/functions.sh
-
-add_ports() {
-    local cfg="$1" name p found cur
-    name=$(config_get "$cfg" name)
-    [ "$name" = "br-lan" ] || return 0
-    cur=$(config_get "$cfg" ports)
-    for p in ra0 rax0 rai0; do
-        found=0
-        for e in $cur; do
-            [ "$e" = "$p" ] && found=1
-        done
-        [ "$found" = "1" ] || uci add_list network.$cfg.ports="$p"
+wifi_ports=""
+for p in ra0 rax0 rai0; do
+    [ -e "/sys/class/net/$p" ] && wifi_ports="$wifi_ports $p"
+done
+if [ -n "$wifi_ports" ]; then
+    cur=$(uci -q get network.lan.ifname || true)
+    add=""
+    for p in $wifi_ports; do
+        case " $cur " in *" $p "*) ;; *) add="$add $p" ;; esac
     done
-}
-
-config_load network
-config_foreach add_ports device
+    if [ -n "$add" ]; then
+        uci set network.lan.ifname="$cur$add"
+        echo "mtwifi: added$add to lan ifname" | logger -t 99-mtwifi-lan
+    fi
+fi
 
 i=0
 while uci -q get wireless.@wifi-iface[$i] >/dev/null 2>&1; do
