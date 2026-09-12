@@ -1,0 +1,44 @@
+#!/bin/sh
+# Plan B: 回退到 rax0/ra0 命名(k2p 实证良好) 后，修 2.4G(rax0) "disabled or not associated"
+# 要点：清 overlay 残留的旧 l1profile/wireless，从 /rom 刷新正确配置，
+#       并让所有 mtwifi 风格 iface 挂 lan。命名无关(ra0/rax0/rai0 任意)。
+set -euo pipefail
+
+PROF_DIR=/etc/wireless/mt7615
+ROM_PROF_DIR=/rom/etc/wireless/mt7615
+
+# 1) 刷新 l1profile + .dat：用 /rom 覆盖(刻意不用 rm，避免 overlayfs whiteout 让驱动找不到文件)
+if [ -d "$ROM_PROF_DIR" ]; then
+    mkdir -p "$PROF_DIR"
+    for f in "$ROM_PROF_DIR"/*; do
+        [ -f "$f" ] || continue
+        cf="$PROF_DIR/$(basename "$f")"
+        if [ -f "$cf" ] && ! cmp -s "$f" "$cf"; then
+            cp -f "$f" "$cf"
+            echo "[99-mtwifi-lan] refreshed $(basename "$f") from /rom"
+        fi
+    done
+fi
+
+# 2) 清旧开源 wireless 残留，或检测不到任何 mtwifi iface 时重建
+if [ -f /etc/config/wireless ]; then
+    if grep -Eq 'radio0|type mac80211|kmod-mt76|mt76x' /etc/config/wireless; then
+        rm -f /etc/config/wireless
+        echo "[99-mtwifi-lan] removed legacy mt76 wireless"
+    elif ! grep -Eq 'ifname (ra0|rax0|rai0)' /etc/config/wireless; then
+        rm -f /etc/config/wireless
+        echo "[99-mtwifi-lan] no mtwifi iface found, rebuild wireless"
+    fi
+fi
+
+# 3) 所有 mt7615/mt76 wifi-iface 强制挂 lan(覆盖 ra0/rax0/rai0 任意命名)
+i=0
+while uci get wireless.@wifi-iface[$i] >/dev/null 2>&1; do
+    dev=$(uci get wireless.@wifi-iface[$i].device 2>/dev/null)
+    case "$dev" in
+        mt7615*|mt76*) uci set wireless.@wifi-iface[$i].network='lan' ;;
+    esac
+    i=$((i+1))
+done
+uci commit wireless
+exit 0
