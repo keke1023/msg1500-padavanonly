@@ -139,8 +139,8 @@ jobs:
           echo "--- 已选中的关键包 ---"
           echo "--- MTK DBDC 状态（rai0 关键）---"
           grep -E "^CONFIG_MTK_(DBDC_MODE|CHIP_MT7615E|CHIP_MT7615E_DBDC|FIRST_IF_MT7615E|MULTI_INF_SUPPORT|DEFAULT_5G_PROFILE)=" .config || echo "!! MTK DBDC 链未生效"
-          echo "--- HWNAT(mtkhnat.ko，Turbo ACC 硬件流量分载依赖) ---"
-          grep -qE "^CONFIG_PACKAGE_kmod-ramips_hnat=[ym]" .config && echo "OK HWNAT(mtkhnat) 已启用(=$(grep -oE 'kmod-ramips_hnat=[ym]' .config | head -1 | cut -d= -f2))" || echo "!! HWNAT(mtkhnat) 未启用"
+          echo "--- HWNAT(mtkhnat.ko) 依赖链（仅供观察，硬校验在构建后 manifest） ---"
+          grep -E "^CONFIG_PACKAGE_kmod-ramips_hnat=" .config || echo "!! .config 无 kmod-ramips_hnat（应随 DEFAULT_PACKAGES 自动选中）"
 
           grep -E "^CONFIG_PACKAGE_(luci-app-frpc|luci-app-ngrokc|luci-app-autoreboot|luci-app-ssr-plus|xray-core|kmod-mt7615[de]|luci-app-mtwifi|mt_wifi)=" .config || true
           echo "--- golang 版本 ---"
@@ -164,6 +164,11 @@ jobs:
           cp -v bin/targets/ramips/mt7621/*${GLOB}* /tmp/out/ 2>/dev/null || true
           cp -v bin/targets/ramips/mt7621/sha256sums /tmp/out/ 2>/dev/null || true
           ls -lh /tmp/out/
+          # 硬校验：HWNAT 模块必须真实装进镜像（.config 校验骗过我们一次：=y 却没装，见 run 34697744419）
+          MANIFEST=$(ls bin/targets/ramips/mt7621/*.manifest | head -1)
+          grep -q "^kmod-ramips_hnat - " "$MANIFEST" \
+            || { echo "!! kmod-ramips_hnat 不在镜像 manifest 里，Turbo ACC 硬件分载将不可用，判定构建失败"; exit 1; }
+          echo "OK kmod-ramips_hnat 已在镜像 manifest（mtkhnat.ko 已随镜像发出）"
 
       - name: 上传固件
         uses: actions/upload-artifact@v4
