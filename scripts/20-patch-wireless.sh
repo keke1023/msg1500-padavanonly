@@ -43,20 +43,15 @@ cat > files/etc/uci-defaults/99-mtwifi-lan <<'EOF'
 # 3) 清理开源 mt76 驱动残留的旧 wireless 配置。
 [ -f /etc/config/wireless ] && grep -Eq 'type mac80211|radio[0-9]+' /etc/config/wireless && rm -f /etc/config/wireless
 
-wifi_ports=""
-for p in ra0 rax0 rai0; do
-    [ -e "/sys/class/net/$p" ] && wifi_ports="$wifi_ports $p"
+wifi_ports="ra0 rax0 rai0"
+cur=$(uci -q get network.lan.ifname || true)
+add=""
+for p in $wifi_ports; do
+    case " $cur " in *" $p "*) ;; *) add="$add $p" ;; esac
 done
-if [ -n "$wifi_ports" ]; then
-    cur=$(uci -q get network.lan.ifname || true)
-    add=""
-    for p in $wifi_ports; do
-        case " $cur " in *" $p "*) ;; *) add="$add $p" ;; esac
-    done
-    if [ -n "$add" ]; then
-        uci set network.lan.ifname="$cur$add"
-        echo "mtwifi: added$add to lan ifname" | logger -t 99-mtwifi-lan
-    fi
+if [ -n "$add" ]; then
+    uci set network.lan.ifname="$cur$add"
+    echo "mtwifi: appended$add to lan ifname" | logger -t 99-mtwifi-lan
 fi
 
 i=0
@@ -85,21 +80,23 @@ START=99
 
 boot() {
     local i dev
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-        [ -e /sys/class/net/br-lan ] || { sleep 2; continue; }
-        for dev in ra0 rax0 rai0; do
-            [ -e /sys/class/net/$dev ] || continue
-            [ -e /sys/class/net/br-lan/brif/$dev ] && continue
-            ifconfig "$dev" up 2>/dev/null
-            if brctl addif br-lan "$dev" 2>/dev/null; then
-                logger -t mtwifi-bridge "added $dev to br-lan"
-            else
-                logger -t mtwifi-bridge "FAILED to add $dev to br-lan"
-            fi
-        done
-        return 0
+    # 多轮重试不提前退出：早期轮次加入后可能被 netifd 按（当时缺端口的）旧配置重建 br-lan 逐出，
+    # 持续补挂到窗口结束，保证最终稳在桥里。
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        if [ -e /sys/class/net/br-lan ]; then
+            for dev in ra0 rax0 rai0; do
+                [ -e /sys/class/net/$dev ] || continue
+                [ -e /sys/class/net/br-lan/brif/$dev ] && continue
+                ifconfig "$dev" up 2>/dev/null
+                if brctl addif br-lan "$dev" 2>/dev/null; then
+                    logger -t mtwifi-bridge "added $dev to br-lan (round $i)"
+                else
+                    logger -t mtwifi-bridge "FAILED to add $dev to br-lan (round $i)"
+                fi
+            done
+        fi
+        sleep 2
     done
-    logger -t mtwifi-bridge "br-lan not ready after 10 tries, gave up"
 }
 
 start() { boot; }
@@ -120,16 +117,18 @@ boot() {
         logger -t mtkhnat "mtkhnat.ko MISSING in /lib/modules/$(uname -r)/"
         return 0
     fi
-    grep -q '^mtkhnat' /proc/modules && return 0
-    if modprobe mtkhnat 2>/tmp/mtkhnat.err; then
-        logger -t mtkhnat "loaded ok"
-    else
-        logger -t mtkhnat "modprobe FAILED: $(head -n1 /tmp/mtkhnat.err)"
-    fi
+    # debugfs 未挂载时 hnat_version 永远不存在（会误判 probe 失败），先确保挂载
+    [ -d /sys/kernel/debug ] && ! grep -q ' /sys/kernel/debug ' /proc/mounts 2>/dev/null && \
+        mount -t debugfs none /sys/kernel/debug 2>/dev/null
+    grep -q '^mtkhnat' /proc/modules || modprobe mtkhnat 2>/tmp/mtkhnat.err \
+        || logger -t mtkhnat "modprobe FAILED: $(head -n1 /tmp/mtkhnat.err)"
+    grep -q '^mtkhnat' /proc/modules && logger -t mtkhnat "loaded ok"
     if [ -e /sys/kernel/debug/hnat/hnat_version ]; then
-        logger -t mtkhnat "hnat_version present"
+        logger -t mtkhnat "hnat_version present: $(cat /sys/kernel/debug/hnat/hnat_version 2>/dev/null)"
     else
-        logger -t mtkhnat "hnat_version MISSING after load (check dmesg)"
+        logger -t mtkhnat "hnat_version MISSING after load; dmesg dump follows:"
+        dmesg 2>/dev/null | grep -iE 'hnat|ppe|hnat_init|extif|gdm' | tail -n 20 | \
+            while IFS= read -r line; do logger -t mtkhnat "dmesg: $line"; done
     fi
 }
 
