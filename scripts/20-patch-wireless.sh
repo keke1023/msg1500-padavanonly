@@ -28,7 +28,8 @@ echo "[*] enable HWNAT node in msg1500 dts"
 # （模块 modprobe 成功≠probe 执行；k2p 的 dts 自带 &hnat 块所以 HWNAT 正常，msg1500 没有 →
 #   dmesg 零 hnat/ppe 输出、无 debugfs hnat_version、Turbo ACC 显示未运行）。
 # 属性依据 hnat.c/hnat_nf_hook.c 源码：wan/ppd 经 dev_get_by_name 按名取 netdev，必须写实际存在的接口；
-# ext-devices 为参与 offload 的 wifi 接口列表（不存在者被跳过，无害）；单网口 max-gmac=1。
+# ⚠️ 不写 ext-devices（wifi 接口）——实测把 ra0/rax0 挂进 PPE 后 wifi 单播进硬件黑洞（广播/DHCP 正常、
+#   ping 网关不通，卸载 mtkhnat 立刻恢复）；不写该属性则 wifi 流量走软件转发，有线 HWNAT 加速保留。
 DTS=target/linux/ramips/dts/mt7621_raisecom_msg1500-x-00.dts
 if [ ! -f "$DTS" ]; then
   echo "!! 未找到 msg1500 dts: $DTS"
@@ -41,7 +42,6 @@ cat >> "$DTS" <<'EOF'
 	mtketh-wan = "eth0.2";
 	mtketh-ppd = "eth0";
 	mtketh-lan = "eth0";
-	ext-devices = "ra0","rax0","rai0","apcli0","apclix0","apclii0";
 	mtketh-max-gmac = <1>;
 	status = "okay";
 };
