@@ -64,19 +64,26 @@ mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-mtwifi-lan <<'EOF'
 #!/bin/sh
 # MTK 闭源驱动(mt_wifi)兜底（老式 swconfig 风格 network：option type bridge + option ifname）：
-# 1) 把已存在的 ra0/rax0/rai0 追加进 lan 的 ifname（netifd 建桥时挂入，持久化、reload 不掉）；
-#    注：本树 network 为老式 ifname 风格，DSA 的 config device/list ports 写法无效。
-#    驱动由 /lib/preinit/91_load_wifi.sh 在 preinit 阶段加载，先于 S10 boot 的 uci-defaults，接口已存在。
+# 1) 把 ra0/rax0 追加进 lan 的 ifname（netifd 建桥时挂入，持久化、reload 不掉）；
+#    rax0 必须无条件写入：2.4G 射频初始化比 5G 慢，uci-defaults 执行时可能尚未创建，
+#    按存在性过滤会漏掉（实测踩坑）；老式 netifd 对暂不存在的端口会跳过，无害。
+#    rai0 仅双芯片 MT7615E 设计才有（第二颗芯片 5G），单芯片 DBDC 不存在，只在真实存在时追加并清理残留。
 # 2) wifi-iface 强制 network=lan；
 # 3) 清理开源 mt76 驱动残留的旧 wireless 配置。
 [ -f /etc/config/wireless ] && grep -Eq 'type mac80211|radio[0-9]+' /etc/config/wireless && rm -f /etc/config/wireless
 
-wifi_ports="ra0 rax0 rai0"
+wifi_ports="ra0 rax0"
+[ -e /sys/class/net/rai0 ] && wifi_ports="$wifi_ports rai0"
 cur=$(uci -q get network.lan.ifname || true)
 add=""
 for p in $wifi_ports; do
     case " $cur " in *" $p "*) ;; *) add="$add $p" ;; esac
 done
+# rai0 仅存在于双芯片 MT7615E 设计（第二颗芯片的 5G）；msg1500 为单芯片 DBDC（ra0=5G/rax0=2.4G），
+# 永远不会有 rai0——若旧配置有残留则清除，避免 lan 绑定里出现不存在的接口。
+if [ ! -e /sys/class/net/rai0 ]; then
+    uci -q del_list network.lan.ifname="rai0"
+fi
 if [ -n "$add" ]; then
     uci set network.lan.ifname="$cur$add"
     echo "mtwifi: appended$add to lan ifname" | logger -t 99-mtwifi-lan
