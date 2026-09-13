@@ -23,6 +23,34 @@ else
   exit 1
 fi
 
+echo "[*] enable HWNAT node in msg1500 dts"
+# mt7621.dtsi 里 hnat 节点默认 status="disabled"，必须在设备 dts 里显式打开才会 probe
+# （模块 modprobe 成功≠probe 执行；k2p 的 dts 自带 &hnat 块所以 HWNAT 正常，msg1500 没有 →
+#   dmesg 零 hnat/ppe 输出、无 debugfs hnat_version、Turbo ACC 显示未运行）。
+# 属性依据 hnat.c/hnat_nf_hook.c 源码：wan/ppd 经 dev_get_by_name 按名取 netdev，必须写实际存在的接口；
+# ext-devices 为参与 offload 的 wifi 接口列表（不存在者被跳过，无害）；单网口 max-gmac=1。
+DTS=target/linux/ramips/dts/mt7621_raisecom_msg1500-x-00.dts
+if [ ! -f "$DTS" ]; then
+  echo "!! 未找到 msg1500 dts: $DTS"
+  exit 1
+fi
+if ! grep -q '&hnat' "$DTS"; then
+cat >> "$DTS" <<'EOF'
+
+&hnat {
+	mtketh-wan = "eth0.2";
+	mtketh-ppd = "eth0";
+	mtketh-lan = "eth0";
+	ext-devices = "ra0","rax0","rai0","apcli0","apclix0","apclii0";
+	mtketh-max-gmac = <1>;
+	status = "okay";
+};
+EOF
+echo "[+] hnat node appended (status=okay)"
+else
+echo "[=] hnat node already present, skip"
+fi
+
 echo "[*] force MTK_DBDC_MODE (5G rai0) default y for mt7615d"
 if grep -q 'bool "dbdc mode support"' package/emortal/mt-drivers/mt7615d/config.in; then
   sed -i 's|^\(\s*\)bool "dbdc mode support"|\0\n\1default y if MTK_CHIP_MT7615E|' package/emortal/mt-drivers/mt7615d/config.in
