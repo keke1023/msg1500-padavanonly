@@ -86,6 +86,9 @@ jobs:
       - name: 剔除 rust 相关包
         run: bash scripts/40-remove-rust.sh
 
+      - name: 补 iptables-mod-socket 兼容元包（消除 ssr-plus「缺失基础依赖」假警告）
+        run: bash scripts/41-fix-iptables-socket.sh
+
       - name: 安装全部 feeds
         working-directory: openwrt
         run: ./scripts/feeds install -a
@@ -133,6 +136,11 @@ jobs:
           if grep -E "^CONFIG_PACKAGE_.*([Rr]ust|shadow-tls)=y" .config; then
             echo "!! 仍有 rust 相关包被选中"; exit 1
           fi
+          # iptables 透明代理后端 + socket 兼容包（缺了 ssr-plus 会在日志里误报缺依赖）
+          grep -q "^CONFIG_PACKAGE_luci-app-ssr-plus_Iptables_Transparent_Proxy=y" .config \
+            || { echo "!! ssr-plus 透明代理后端不是 iptables"; exit 1; }
+          grep -q "^CONFIG_PACKAGE_iptables-mod-socket=y" .config \
+            || { echo "!! iptables-mod-socket 未选中（18.06 需靠兼容元包补包名）"; exit 1; }
           if grep -q "^CONFIG_PACKAGE_kmod-mt7615d=y" .config && grep -q "^CONFIG_PACKAGE_kmod-mt7615e=y" .config; then
             echo "!! kmod-mt7615d 与 kmod-mt7615e 同时选中，会内核冲突"; exit 1
           fi
@@ -169,6 +177,10 @@ jobs:
           grep -q "^kmod-ramips_hnat - " "$MANIFEST" \
             || { echo "!! kmod-ramips_hnat 不在镜像 manifest 里，Turbo ACC 硬件分载将不可用，判定构建失败"; exit 1; }
           echo "OK kmod-ramips_hnat 已在镜像 manifest（mtkhnat.ko 已随镜像发出）"
+          # 硬校验：iptables-mod-socket 兼容包必须真装进镜像（否则 ssr-plus 启动即误报）
+          grep -q "^iptables-mod-socket - " "$MANIFEST" \
+            || { echo "!! iptables-mod-socket 不在镜像 manifest，ssr-plus 仍会报「缺失基础依赖」"; exit 1; }
+          echo "OK iptables-mod-socket 已在镜像 manifest（兼容元包已进固件）"
 
       - name: 上传固件
         uses: actions/upload-artifact@v4
